@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trestle-etl"
+version = "0.1.0"
+description = "ETL pipeline that extracts Trestle WebAPI Property records into MySQL."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Trestle ETL" }]
+
+dependencies = [
+    "requests==2.32.3",
+    "pydantic>=2.7,<3",
+    "sqlalchemy==2.0.36",
+    "pymysql==1.1.1",
+    "python-dotenv==1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "hypothesis==6.115.5",
+    "responses==0.25.3",
+    "freezegun==1.5.1",
+    "testcontainers==4.8.2",
+]
+
+[project.scripts]
+trestle-etl = "trestle_etl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["trestle_etl*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+trestle_etl = ["sql/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
