@@ -76,7 +76,7 @@ The schema at [`trestle_etl/sql/schema.sql`](./trestle_etl/sql/schema.sql)
 creates the `property` table (InnoDB, `utf8mb4`), every RESO Promoted_Column
 as a typed column, a `raw_data JSON NOT NULL` column for full-record
 preservation, a `loaded_at DATETIME(6) NOT NULL` column, and the seven
-secondary indexes (`ModificationTimestamp`, `StandardStatus`, `PropertyType`,
+secondary indexes (`ModificationTimestamp`, `MlsStatus`, `PropertyType`,
 `City`, `PostalCode`, `ListPrice`, `StateOrProvince`).
 
 Apply it once against your target database:
@@ -84,6 +84,21 @@ Apply it once against your target database:
 ```bash
 mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p "$MYSQL_DATABASE" \
   < trestle_etl/sql/schema.sql
+```
+
+Alternatively, use the idempotent helper, which reads the same `.env` as the
+pipeline:
+
+```bash
+python scripts/apply_schema.py
+```
+
+To pick up a breaking column change on a database whose data is disposable,
+pass `--recreate` to drop and rebuild the `property` table (this destroys all
+existing rows):
+
+```bash
+python scripts/apply_schema.py --recreate
 ```
 
 ### 2. Enable `LOAD DATA LOCAL INFILE` (required for `--full-sync`)

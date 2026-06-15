@@ -52,60 +52,100 @@ class Property(BaseModel):
     # match the MySQL column definition (Requirement 6.2, 5.6).
     ListingKey: str = Field(min_length=1, max_length=128)
 
-    # Timestamps --------------------------------------------------------
-    ModificationTimestamp: datetime | None = None
-
-    # Enumerations and free-form strings --------------------------------
-    StandardStatus: str | None = None
+    # MLS-facing identifier and status ----------------------------------
+    ListingId: str | None = None
     MlsStatus: str | None = None
-    PropertyType: str | None = None
-    PropertySubType: str | None = None
 
-    # Monetary values ---------------------------------------------------
-    ListPrice: Decimal | None = None
-    ClosePrice: Decimal | None = None
-    OriginalListPrice: Decimal | None = None
-
-    # Dates -------------------------------------------------------------
-    ListingContractDate: date | None = None
-    CloseDate: date | None = None
-
-    # Address -----------------------------------------------------------
-    StreetNumber: str | None = None
-    StreetName: str | None = None
-    UnitNumber: str | None = None
-    City: str | None = None
-    StateOrProvince: str | None = None
-    PostalCode: str | None = None
-    County: str | None = None
-    Country: str | None = None
+    # Internet display flags --------------------------------------------
+    InternetEntireListingDisplayYN: bool | None = None
+    InternetAddressDisplayYN: bool | None = None
+    InternetAutomatedValuationDisplayYN: bool | None = None
+    InternetConsumerCommentYN: bool | None = None
 
     # Geospatial --------------------------------------------------------
     Latitude: Decimal | None = None
     Longitude: Decimal | None = None
 
-    # Counts and measurements ------------------------------------------
-    BedroomsTotal: int | None = None
-    BathroomsTotalInteger: int | None = None
+    # Address -----------------------------------------------------------
+    ParcelNumber: str | None = None
+    StreetNumberNumeric: int | None = None
+    StreetDirPrefix: str | None = None
+    StreetName: str | None = None
+    StreetSuffix: str | None = None
+    UnitNumber: str | None = None
+    City: str | None = None
+    StateOrProvince: str | None = None
+    PostalCode: str | None = None
+
+    # Monetary values ---------------------------------------------------
+    OriginalListPrice: Decimal | None = None
+    ListPrice: Decimal | None = None
+    ClosePrice: Decimal | None = None
+
+    # Timestamps and dates ----------------------------------------------
+    ModificationTimestamp: datetime | None = None
+    OriginalEntryTimestamp: datetime | None = None
+    PendingTimestamp: datetime | None = None
+    StatusChangeTimestamp: datetime | None = None
+    WithdrawnDate: date | None = None
+    CloseDate: date | None = None
+    PhotosChangeTimestamp: datetime | None = None
+
+    # Media counts ------------------------------------------------------
+    PhotosCount: int | None = None
+    VideosCount: int | None = None
+
+    # Property classification -------------------------------------------
+    PropertyType: str | None = None
+    PropertySubType: str | None = None
+    PropertySubTypeAdditional: str | None = None
+    StructureType: str | None = None
+    YearBuiltDetails: str | None = None
+    ArchitecturalStyle: str | None = None
+    PropertyAttachedYN: bool | None = None
+    Stories: int | None = None
+
+    # Size and rooms ----------------------------------------------------
     LivingArea: Decimal | None = None
     LotSizeSquareFeet: Decimal | None = None
+    BedroomsTotal: int | None = None
+    BathroomsFull: int | None = None
+    BathroomsHalf: int | None = None
+    BathroomsThreeQuarter: int | None = None
+    GarageSpaces: Decimal | None = None
     YearBuilt: int | None = None
-    DaysOnMarket: int | None = None
+    YearBuiltEffective: int | None = None
 
-    # Foreign keys ------------------------------------------------------
+    # Features ----------------------------------------------------------
+    PoolPrivateYN: bool | None = None
+    SpaYN: bool | None = None
+    DirectionFaces: str | None = None
+    SeniorCommunityYN: bool | None = None
+    AssociationYN: bool | None = None
+    AssociationAmenities: str | None = None
+    HorseAmenities: str | None = None
+    PetsAllowedYN: bool | None = None
+    Furnished: str | None = None
+
+    # Agents, offices, teams --------------------------------------------
     ListAgentKey: str | None = None
     ListOfficeKey: str | None = None
+    ListTeamKey: str | None = None
+    BuyerAgentKey: str | None = None
+    BuyerOfficeKey: str | None = None
+    BuyerTeamKey: str | None = None
 
-    # Misc --------------------------------------------------------------
-    PhotosCount: int | None = None
-    PublicRemarks: str | None = None
-
-    @field_validator("ModificationTimestamp", mode="after")
+    @field_validator(
+        "ModificationTimestamp",
+        "OriginalEntryTimestamp",
+        "PendingTimestamp",
+        "StatusChangeTimestamp",
+        "PhotosChangeTimestamp",
+        mode="after",
+    )
     @classmethod
-    def _normalize_modification_timestamp(
-        cls, value: datetime | None
-    ) -> datetime | None:
-        """Force ``ModificationTimestamp`` to a UTC-aware ``datetime``.
+    def _normalize_timestamp(cls, value: datetime | None) -> datetime | None:
+        """Force timestamp fields to a UTC-aware ``datetime``.
 
         Pydantic parses ISO 8601 strings (with or without offset) into
         ``datetime`` instances; this validator runs afterwards so it can

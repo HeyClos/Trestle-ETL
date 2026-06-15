@@ -73,6 +73,12 @@ from trestle_etl import orchestrator as orch_mod
 from trestle_etl.config import Settings
 from trestle_etl.loader import BatchResult, Row
 from trestle_etl.state import StateStore
+from trestle_etl.transformer import PROMOTED_COLUMNS
+
+# Index of ``ModificationTimestamp`` inside the promoted-columns tuple,
+# resolved once so the fake loader does not depend on a hardcoded
+# position (the column order in ``PROMOTED_COLUMNS`` can change).
+_MOD_TS_INDEX = PROMOTED_COLUMNS.index("ModificationTimestamp")
 
 
 # ---------------------------------------------------------------------------
@@ -194,13 +200,13 @@ class InMemoryTableLoader:
         # batch's max ModificationTimestamp for the BatchResult. Each
         # ``row`` is a ``(promoted_columns_tuple, raw_data_json)`` pair
         # produced by :func:`trestle_etl.transformer.to_row`; the
-        # promoted tuple's index 0 is ``ListingKey`` and index 1 is
-        # ``ModificationTimestamp`` (order defined in
-        # ``trestle_etl.transformer.PROMOTED_COLUMNS``).
+        # promoted tuple's index 0 is ``ListingKey`` and
+        # ``ModificationTimestamp`` lives at ``_MOD_TS_INDEX`` (resolved
+        # from ``trestle_etl.transformer.PROMOTED_COLUMNS``).
         max_ts: Optional[datetime] = None
         for promoted, raw_data_json in rows:
             listing_key: str = promoted[0]
-            mod_ts: Optional[datetime] = promoted[1]
+            mod_ts: Optional[datetime] = promoted[_MOD_TS_INDEX]
             self.table[listing_key] = (mod_ts, raw_data_json)
             if mod_ts is not None and (max_ts is None or mod_ts > max_ts):
                 max_ts = mod_ts

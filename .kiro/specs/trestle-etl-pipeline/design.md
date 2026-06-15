@@ -230,8 +230,8 @@ class Property(BaseModel):
     model_config = ConfigDict(extra="allow")   # unknown RESO fields retained on the model
 
     ListingKey: str = Field(max_length=128)
-    ModificationTimestamp: datetime | None = None
-    StandardStatus: str | None = None
+    ListingId: str | None = None
+    MlsStatus: str | None = None
     # ... all Promoted_Columns fields (see Data Models section)
 ```
 
@@ -363,79 +363,141 @@ Fields correspond one-to-one with Promoted_Columns. Only listed fields are typed
 
 | Field | Python type | Notes |
 |---|---|---|
-| `ListingKey` | `str` (≤128) | Required, non-empty |
-| `ModificationTimestamp` | `datetime \| None` | Parsed as UTC |
-| `StandardStatus` | `str \| None` | Canonical PascalCase |
+| `ListingKey` | `str` (≤128) | Required, non-empty; primary key |
+| `ListingId` | `str \| None` | MLS-facing listing identifier |
 | `MlsStatus` | `str \| None` | |
-| `PropertyType` | `str \| None` | Canonical PascalCase |
-| `PropertySubType` | `str \| None` | |
-| `ListPrice` | `Decimal \| None` | |
-| `ClosePrice` | `Decimal \| None` | |
-| `OriginalListPrice` | `Decimal \| None` | |
-| `ListingContractDate` | `date \| None` | |
-| `CloseDate` | `date \| None` | |
-| `StreetNumber` | `str \| None` | |
+| `InternetEntireListingDisplayYN` | `bool \| None` | |
+| `InternetAddressDisplayYN` | `bool \| None` | |
+| `InternetAutomatedValuationDisplayYN` | `bool \| None` | |
+| `InternetConsumerCommentYN` | `bool \| None` | |
+| `Latitude` | `Decimal \| None` | |
+| `Longitude` | `Decimal \| None` | |
+| `ParcelNumber` | `str \| None` | |
+| `StreetNumberNumeric` | `int \| None` | |
+| `StreetDirPrefix` | `str \| None` | |
 | `StreetName` | `str \| None` | |
+| `StreetSuffix` | `str \| None` | |
 | `UnitNumber` | `str \| None` | |
 | `City` | `str \| None` | |
 | `StateOrProvince` | `str \| None` | |
 | `PostalCode` | `str \| None` | |
-| `County` | `str \| None` | |
-| `Country` | `str \| None` | |
-| `Latitude` | `Decimal \| None` | |
-| `Longitude` | `Decimal \| None` | |
-| `BedroomsTotal` | `int \| None` | |
-| `BathroomsTotalInteger` | `int \| None` | |
+| `OriginalListPrice` | `Decimal \| None` | |
+| `ListPrice` | `Decimal \| None` | |
+| `ClosePrice` | `Decimal \| None` | |
+| `ModificationTimestamp` | `datetime \| None` | Parsed as UTC |
+| `OriginalEntryTimestamp` | `datetime \| None` | Parsed as UTC |
+| `PendingTimestamp` | `datetime \| None` | Parsed as UTC |
+| `StatusChangeTimestamp` | `datetime \| None` | Parsed as UTC |
+| `WithdrawnDate` | `date \| None` | |
+| `CloseDate` | `date \| None` | |
+| `PhotosChangeTimestamp` | `datetime \| None` | Parsed as UTC |
+| `PhotosCount` | `int \| None` | |
+| `VideosCount` | `int \| None` | |
+| `PropertyType` | `str \| None` | Canonical PascalCase |
+| `PropertySubType` | `str \| None` | |
+| `PropertySubTypeAdditional` | `str \| None` | |
+| `StructureType` | `str \| None` | Possible multi-select; raw string preserved |
+| `YearBuiltDetails` | `str \| None` | |
+| `ArchitecturalStyle` | `str \| None` | Possible multi-select; raw string preserved |
+| `PropertyAttachedYN` | `bool \| None` | |
+| `Stories` | `int \| None` | |
 | `LivingArea` | `Decimal \| None` | |
 | `LotSizeSquareFeet` | `Decimal \| None` | |
+| `BedroomsTotal` | `int \| None` | |
+| `BathroomsFull` | `int \| None` | |
+| `BathroomsHalf` | `int \| None` | |
+| `BathroomsThreeQuarter` | `int \| None` | |
+| `GarageSpaces` | `Decimal \| None` | May be fractional |
 | `YearBuilt` | `int \| None` | |
-| `DaysOnMarket` | `int \| None` | |
+| `YearBuiltEffective` | `int \| None` | |
+| `PoolPrivateYN` | `bool \| None` | |
+| `SpaYN` | `bool \| None` | |
+| `DirectionFaces` | `str \| None` | |
+| `SeniorCommunityYN` | `bool \| None` | |
+| `AssociationYN` | `bool \| None` | |
+| `AssociationAmenities` | `str \| None` | Multi-select; raw string preserved |
+| `HorseAmenities` | `str \| None` | Multi-select; raw string preserved |
+| `PetsAllowedYN` | `bool \| None` | |
+| `Furnished` | `str \| None` | |
 | `ListAgentKey` | `str \| None` | |
 | `ListOfficeKey` | `str \| None` | |
-| `PhotosCount` | `int \| None` | |
-| `PublicRemarks` | `str \| None` | Potentially long; `TEXT` column |
+| `ListTeamKey` | `str \| None` | |
+| `BuyerAgentKey` | `str \| None` | |
+| `BuyerOfficeKey` | `str \| None` | |
+| `BuyerTeamKey` | `str \| None` | |
 
 ### MySQL `property` Table Schema
 
 ```sql
 CREATE TABLE property (
-    ListingKey              VARCHAR(128) NOT NULL PRIMARY KEY,
-    ModificationTimestamp   DATETIME(6) NULL,
-    StandardStatus          VARCHAR(64) NULL,
-    MlsStatus               VARCHAR(64) NULL,
-    PropertyType            VARCHAR(64) NULL,
-    PropertySubType         VARCHAR(64) NULL,
-    ListPrice               DECIMAL(14,2) NULL,
-    ClosePrice              DECIMAL(14,2) NULL,
-    OriginalListPrice       DECIMAL(14,2) NULL,
-    ListingContractDate     DATE NULL,
-    CloseDate               DATE NULL,
-    StreetNumber            VARCHAR(32) NULL,
-    StreetName              VARCHAR(128) NULL,
-    UnitNumber              VARCHAR(32) NULL,
-    City                    VARCHAR(64) NULL,
-    StateOrProvince         VARCHAR(2) NULL,
-    PostalCode              VARCHAR(16) NULL,
-    County                  VARCHAR(64) NULL,
-    Country                 VARCHAR(2) NULL,
-    Latitude                DECIMAL(10,7) NULL,
-    Longitude               DECIMAL(10,7) NULL,
-    BedroomsTotal           SMALLINT NULL,
-    BathroomsTotalInteger   SMALLINT NULL,
-    LivingArea              DECIMAL(10,2) NULL,
-    LotSizeSquareFeet       DECIMAL(12,2) NULL,
-    YearBuilt               SMALLINT NULL,
-    DaysOnMarket            INT NULL,
-    ListAgentKey            VARCHAR(128) NULL,
-    ListOfficeKey           VARCHAR(128) NULL,
-    PhotosCount             INT NULL,
-    PublicRemarks           TEXT NULL,
-    raw_data                JSON NOT NULL,
-    loaded_at               DATETIME(6) NOT NULL
+    ListingKey                              VARCHAR(128) NOT NULL PRIMARY KEY,
+    ListingId                               VARCHAR(128) NULL,
+    MlsStatus                               VARCHAR(64) NULL,
+    InternetEntireListingDisplayYN          TINYINT(1) NULL,
+    InternetAddressDisplayYN                TINYINT(1) NULL,
+    InternetAutomatedValuationDisplayYN     TINYINT(1) NULL,
+    InternetConsumerCommentYN               TINYINT(1) NULL,
+    Latitude                                DECIMAL(10,7) NULL,
+    Longitude                               DECIMAL(10,7) NULL,
+    ParcelNumber                            VARCHAR(64) NULL,
+    StreetNumberNumeric                     INT NULL,
+    StreetDirPrefix                         VARCHAR(16) NULL,
+    StreetName                              VARCHAR(128) NULL,
+    StreetSuffix                            VARCHAR(32) NULL,
+    UnitNumber                              VARCHAR(32) NULL,
+    City                                    VARCHAR(64) NULL,
+    StateOrProvince                         VARCHAR(2) NULL,
+    PostalCode                              VARCHAR(16) NULL,
+    OriginalListPrice                       DECIMAL(14,2) NULL,
+    ListPrice                               DECIMAL(14,2) NULL,
+    ClosePrice                              DECIMAL(14,2) NULL,
+    ModificationTimestamp                   DATETIME(6) NULL,
+    OriginalEntryTimestamp                  DATETIME(6) NULL,
+    PendingTimestamp                        DATETIME(6) NULL,
+    StatusChangeTimestamp                   DATETIME(6) NULL,
+    WithdrawnDate                           DATE NULL,
+    CloseDate                               DATE NULL,
+    PhotosChangeTimestamp                   DATETIME(6) NULL,
+    PhotosCount                             INT NULL,
+    VideosCount                             INT NULL,
+    PropertyType                            VARCHAR(64) NULL,
+    PropertySubType                         VARCHAR(64) NULL,
+    PropertySubTypeAdditional               VARCHAR(128) NULL,
+    StructureType                           VARCHAR(128) NULL,
+    YearBuiltDetails                        VARCHAR(128) NULL,
+    ArchitecturalStyle                      VARCHAR(128) NULL,
+    PropertyAttachedYN                      TINYINT(1) NULL,
+    Stories                                 SMALLINT NULL,
+    LivingArea                              DECIMAL(10,2) NULL,
+    LotSizeSquareFeet                       DECIMAL(12,2) NULL,
+    BedroomsTotal                           SMALLINT NULL,
+    BathroomsFull                           SMALLINT NULL,
+    BathroomsHalf                           SMALLINT NULL,
+    BathroomsThreeQuarter                   SMALLINT NULL,
+    GarageSpaces                            DECIMAL(6,2) NULL,
+    YearBuilt                               SMALLINT NULL,
+    YearBuiltEffective                      SMALLINT NULL,
+    PoolPrivateYN                           TINYINT(1) NULL,
+    SpaYN                                   TINYINT(1) NULL,
+    DirectionFaces                          VARCHAR(32) NULL,
+    SeniorCommunityYN                       TINYINT(1) NULL,
+    AssociationYN                           TINYINT(1) NULL,
+    AssociationAmenities                    VARCHAR(512) NULL,
+    HorseAmenities                          VARCHAR(512) NULL,
+    PetsAllowedYN                           TINYINT(1) NULL,
+    Furnished                               VARCHAR(32) NULL,
+    ListAgentKey                            VARCHAR(128) NULL,
+    ListOfficeKey                           VARCHAR(128) NULL,
+    ListTeamKey                             VARCHAR(128) NULL,
+    BuyerAgentKey                           VARCHAR(128) NULL,
+    BuyerOfficeKey                          VARCHAR(128) NULL,
+    BuyerTeamKey                            VARCHAR(128) NULL,
+    raw_data                                JSON NOT NULL,
+    loaded_at                               DATETIME(6) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE INDEX idx_property_modts      ON property(ModificationTimestamp);
-CREATE INDEX idx_property_status     ON property(StandardStatus);
+CREATE INDEX idx_property_status     ON property(MlsStatus);
 CREATE INDEX idx_property_type       ON property(PropertyType);
 CREATE INDEX idx_property_city       ON property(City);
 CREATE INDEX idx_property_postal     ON property(PostalCode);

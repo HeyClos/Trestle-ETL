@@ -74,7 +74,7 @@ from trestle_etl.state import SyncState
 # a test failure rather than a silent drift.
 _INDEX_DEFINITIONS: dict[str, str] = {
     "idx_property_modts": "ModificationTimestamp",
-    "idx_property_status": "StandardStatus",
+    "idx_property_status": "MlsStatus",
     "idx_property_type": "PropertyType",
     "idx_property_city": "City",
     "idx_property_postal": "PostalCode",

@@ -1,0 +1,6 @@
+{
+  "last_modification_timestamp": "2022-03-29T18:50:16.340000+00:00",
+  "replication_in_progress": true,
+  "replication_next_link": "https://api.cotality.com/trestle/odata/Property?$filter=ModificationTimestamp+gt+2022-03-29T18%3a49%3a08.340000Z&$orderby=ModificationTimestamp+asc&$top=1000&$skip=32000",
+  "replication_next_link_persisted_at": "2026-05-23T05:20:31.257172+00:00"
+}

@@ -83,7 +83,7 @@ _CSV_COLUMNS: Final[tuple[str, ...]] = PROMOTED_COLUMNS + ("raw_data", "loaded_a
 # ListingKey is deliberately excluded (Requirement 8.7 preserves the PK).
 _SECONDARY_INDEXES: Final[tuple[tuple[str, str], ...]] = (
     ("idx_property_modts", "ModificationTimestamp"),
-    ("idx_property_status", "StandardStatus"),
+    ("idx_property_status", "MlsStatus"),
     ("idx_property_type", "PropertyType"),
     ("idx_property_city", "City"),
     ("idx_property_postal", "PostalCode"),

@@ -144,53 +144,99 @@ def valid_records(draw: st.DrawFn) -> dict[str, Any]:
         if draw(st.booleans()):
             record[field] = draw(strategy)
 
-    # Timestamps / dates ------------------------------------------------
-    maybe("ModificationTimestamp", _datetime_strategy())
-    maybe("ListingContractDate", _date_strategy())
-    maybe("CloseDate", _date_strategy())
-
-    # Enumerations and free-form strings -------------------------------
-    maybe("StandardStatus", st.text(max_size=30))
+    # Identifier and status --------------------------------------------
+    maybe("ListingId", st.text(max_size=128))
     maybe("MlsStatus", st.text(max_size=30))
-    maybe("PropertyType", st.text(max_size=30))
-    maybe("PropertySubType", st.text(max_size=30))
 
-    # Monetary values --------------------------------------------------
-    maybe("ListPrice", _money_strategy())
-    maybe("ClosePrice", _money_strategy())
-    maybe("OriginalListPrice", _money_strategy())
+    # Internet display flags -------------------------------------------
+    maybe("InternetEntireListingDisplayYN", st.booleans())
+    maybe("InternetAddressDisplayYN", st.booleans())
+    maybe("InternetAutomatedValuationDisplayYN", st.booleans())
+    maybe("InternetConsumerCommentYN", st.booleans())
+
+    # Geospatial -------------------------------------------------------
+    maybe("Latitude", _latitude_strategy())
+    maybe("Longitude", _longitude_strategy())
 
     # Address ----------------------------------------------------------
-    maybe("StreetNumber", st.text(max_size=32))
+    maybe("ParcelNumber", st.text(max_size=64))
+    maybe("StreetNumberNumeric", st.integers(min_value=0, max_value=999999))
+    maybe("StreetDirPrefix", st.text(max_size=16))
     maybe("StreetName", st.text(max_size=128))
+    maybe("StreetSuffix", st.text(max_size=32))
     maybe("UnitNumber", st.text(max_size=32))
     maybe("City", st.text(max_size=64))
     # Two-letter state code; any printable text of the right length is
     # accepted by the Pydantic model (no pattern constraint).
     maybe("StateOrProvince", st.text(min_size=2, max_size=2))
     maybe("PostalCode", st.text(max_size=16))
-    maybe("County", st.text(max_size=64))
-    maybe("Country", st.text(min_size=2, max_size=2))
 
-    # Geospatial -------------------------------------------------------
-    maybe("Latitude", _latitude_strategy())
-    maybe("Longitude", _longitude_strategy())
+    # Monetary values --------------------------------------------------
+    maybe("OriginalListPrice", _money_strategy())
+    maybe("ListPrice", _money_strategy())
+    maybe("ClosePrice", _money_strategy())
 
-    # Counts / measurements -------------------------------------------
-    maybe("BedroomsTotal", st.integers(min_value=0, max_value=50))
-    maybe("BathroomsTotalInteger", st.integers(min_value=0, max_value=50))
+    # Timestamps / dates ------------------------------------------------
+    maybe("ModificationTimestamp", _datetime_strategy())
+    maybe("OriginalEntryTimestamp", _datetime_strategy())
+    maybe("PendingTimestamp", _datetime_strategy())
+    maybe("StatusChangeTimestamp", _datetime_strategy())
+    maybe("WithdrawnDate", _date_strategy())
+    maybe("CloseDate", _date_strategy())
+    maybe("PhotosChangeTimestamp", _datetime_strategy())
+
+    # Media counts -----------------------------------------------------
+    maybe("PhotosCount", st.integers(min_value=0, max_value=1000))
+    maybe("VideosCount", st.integers(min_value=0, max_value=1000))
+
+    # Property classification ------------------------------------------
+    maybe("PropertyType", st.text(max_size=30))
+    maybe("PropertySubType", st.text(max_size=30))
+    maybe("PropertySubTypeAdditional", st.text(max_size=128))
+    maybe("StructureType", st.text(max_size=128))
+    maybe("YearBuiltDetails", st.text(max_size=128))
+    maybe("ArchitecturalStyle", st.text(max_size=128))
+    maybe("PropertyAttachedYN", st.booleans())
+    maybe("Stories", st.integers(min_value=0, max_value=200))
+
+    # Size and rooms ---------------------------------------------------
     maybe("LivingArea", _area_strategy())
     maybe("LotSizeSquareFeet", _area_strategy())
+    maybe("BedroomsTotal", st.integers(min_value=0, max_value=50))
+    maybe("BathroomsFull", st.integers(min_value=0, max_value=50))
+    maybe("BathroomsHalf", st.integers(min_value=0, max_value=50))
+    maybe("BathroomsThreeQuarter", st.integers(min_value=0, max_value=50))
+    maybe(
+        "GarageSpaces",
+        st.decimals(
+            min_value=Decimal("0"),
+            max_value=Decimal("9999.99"),
+            places=2,
+            allow_nan=False,
+            allow_infinity=False,
+        ).map(str),
+    )
     maybe("YearBuilt", st.integers(min_value=1700, max_value=2100))
-    maybe("DaysOnMarket", st.integers(min_value=0, max_value=10000))
+    maybe("YearBuiltEffective", st.integers(min_value=1700, max_value=2100))
 
-    # Foreign keys -----------------------------------------------------
+    # Features ---------------------------------------------------------
+    maybe("PoolPrivateYN", st.booleans())
+    maybe("SpaYN", st.booleans())
+    maybe("DirectionFaces", st.text(max_size=32))
+    maybe("SeniorCommunityYN", st.booleans())
+    maybe("AssociationYN", st.booleans())
+    maybe("AssociationAmenities", st.text(max_size=512))
+    maybe("HorseAmenities", st.text(max_size=512))
+    maybe("PetsAllowedYN", st.booleans())
+    maybe("Furnished", st.text(max_size=32))
+
+    # Agents, offices, teams -------------------------------------------
     maybe("ListAgentKey", st.text(max_size=128))
     maybe("ListOfficeKey", st.text(max_size=128))
-
-    # Misc -------------------------------------------------------------
-    maybe("PhotosCount", st.integers(min_value=0, max_value=1000))
-    maybe("PublicRemarks", st.text(max_size=200))
+    maybe("ListTeamKey", st.text(max_size=128))
+    maybe("BuyerAgentKey", st.text(max_size=128))
+    maybe("BuyerOfficeKey", st.text(max_size=128))
+    maybe("BuyerTeamKey", st.text(max_size=128))
 
     return record
 

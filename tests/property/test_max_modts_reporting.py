@@ -43,6 +43,12 @@ from trestle_etl.config import Settings
 from trestle_etl.loader import BatchResult, Row
 from trestle_etl.orchestrator import Deps, reset_sigint_state, run_incremental
 from trestle_etl.state import StateStore
+from trestle_etl.transformer import PROMOTED_COLUMNS
+
+# Index of ``ModificationTimestamp`` inside the promoted-columns tuple,
+# resolved once so the fake loader tracks column-order changes in
+# ``PROMOTED_COLUMNS`` automatically.
+_MOD_TS_INDEX = PROMOTED_COLUMNS.index("ModificationTimestamp")
 
 
 class FakeUpsertLoader:
@@ -50,9 +56,10 @@ class FakeUpsertLoader:
 
     The orchestrator folds ``BatchResult.max_modification_timestamp``
     into its running max (Requirement 4.5). Scanning the promoted-
-    columns tuple at index 1 (``ModificationTimestamp``) matches the
-    real ``UpsertLoader``'s behavior so the value the orchestrator sees
-    is the same one the test reconstructs from the generated input.
+    columns tuple at ``_MOD_TS_INDEX`` (``ModificationTimestamp``)
+    matches the real ``UpsertLoader``'s behavior so the value the
+    orchestrator sees is the same one the test reconstructs from the
+    generated input.
     """
 
     def __init__(self) -> None:
@@ -62,10 +69,10 @@ class FakeUpsertLoader:
         self.batches.append(list(rows))
         max_ts: Optional[datetime] = None
         for promoted, _raw in rows:
-            # ModificationTimestamp is PROMOTED_COLUMNS[1]. The
+            # ModificationTimestamp lives at ``_MOD_TS_INDEX``. The
             # transformer coerces it to a tz-aware UTC datetime via the
             # Pydantic model, so direct comparison with ``>`` is safe.
-            ts = promoted[1]
+            ts = promoted[_MOD_TS_INDEX]
             if ts is not None and (max_ts is None or ts > max_ts):
                 max_ts = ts
         return BatchResult(count=len(rows), max_modification_timestamp=max_ts)

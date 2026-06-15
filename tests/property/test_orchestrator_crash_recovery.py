@@ -68,6 +68,12 @@ from trestle_etl import orchestrator as orch
 from trestle_etl.config import Settings
 from trestle_etl.loader import BatchResult, Row
 from trestle_etl.state import StateStore
+from trestle_etl.transformer import PROMOTED_COLUMNS
+
+# Index of ``ModificationTimestamp`` inside the promoted-columns tuple,
+# resolved once so the fake loader does not depend on a hardcoded
+# position (the column order in ``PROMOTED_COLUMNS`` can change).
+_MOD_TS_INDEX = PROMOTED_COLUMNS.index("ModificationTimestamp")
 
 
 # ---------------------------------------------------------------------------
@@ -174,12 +180,12 @@ class _ControlledLoader:
         # persisted watermark (Requirement 7.5).
         max_ts: Optional[datetime] = None
         for promoted, _raw_json in rows:
-            # promoted[0] is ListingKey; promoted[1] is
-            # ModificationTimestamp. Index positions are stable because
-            # they match the declaration order in
-            # ``trestle_etl.transformer.PROMOTED_COLUMNS``.
+            # promoted[0] is ListingKey; ModificationTimestamp lives at
+            # ``_MOD_TS_INDEX``, resolved from
+            # ``trestle_etl.transformer.PROMOTED_COLUMNS`` so the fake
+            # loader tracks column-order changes automatically.
             listing_key: str = promoted[0]
-            mod_ts: Optional[datetime] = promoted[1]
+            mod_ts: Optional[datetime] = promoted[_MOD_TS_INDEX]
             self.db[listing_key] = mod_ts
             if mod_ts is not None and (max_ts is None or mod_ts > max_ts):
                 max_ts = mod_ts

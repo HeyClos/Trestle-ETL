@@ -4,10 +4,15 @@ Reads the same .env as the pipeline. Splits the schema on ``;``, strips
 SQL line comments and blank lines, and executes each non-empty statement
 with pymysql. Idempotent on "already exists" errors so a partial prior
 run can be re-applied safely. Exits non-zero if any other error occurs.
+
+Pass ``--recreate`` to ``DROP TABLE IF EXISTS property`` before applying
+the schema. This is the supported way to pick up a breaking column change
+on a database whose data is disposable; it destroys all existing rows.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import sys
@@ -20,6 +25,9 @@ import pymysql
 SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent / "trestle_etl" / "sql" / "schema.sql"
 )
+
+# Table the schema creates; used by the optional --recreate drop step.
+_TABLE = "property"
 
 # MySQL error codes we treat as "already applied" rather than failures.
 #   1050 = ER_TABLE_EXISTS_ERROR
@@ -48,6 +56,18 @@ def _split_statements(sql_text: str) -> list[str]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help=(
+            "DROP TABLE IF EXISTS property before applying the schema. "
+            "DESTROYS all existing rows. Use only when the data is "
+            "disposable (e.g. picking up a breaking schema change)."
+        ),
+    )
+    args = parser.parse_args()
+
     load_dotenv()
 
     host = _require("MYSQL_HOST")
@@ -73,6 +93,12 @@ def main() -> int:
     failures = 0
     with conn:
         with conn.cursor() as cur:
+            if args.recreate:
+                # Drop the table outright so a breaking column change is
+                # picked up cleanly. Indexes are dropped with the table,
+                # so there is no need to drop them individually.
+                print(f"--recreate: DROP TABLE IF EXISTS {_TABLE}")
+                cur.execute(f"DROP TABLE IF EXISTS {_TABLE}")
             for i, stmt in enumerate(statements, 1):
                 label = stmt.splitlines()[0][:80]
                 try:
