@@ -74,6 +74,7 @@ from trestle_etl.config import Settings
 from trestle_etl.errors import (
     ConfigError,
     CorruptStateError,
+    PipelineLockError,
     TrestleETLError,
     UsageError,
 )
@@ -81,6 +82,7 @@ from trestle_etl.http_client import TrestleClient
 from trestle_etl.loader import BatchResult, Row
 from trestle_etl.loader.bulk import BulkLoader
 from trestle_etl.loader.upsert import UpsertLoader
+from trestle_etl.lock import PipelineLock, default_lock_path
 from trestle_etl.logging_setup import configure_logging
 from trestle_etl.state import StateStore, SyncState
 
@@ -103,6 +105,7 @@ EXIT_USAGE_ERROR = 2
 EXIT_RECONCILE_PLACEHOLDER = 3
 EXIT_CONFIG_ERROR = 4
 EXIT_MISSING_STATE = 5
+EXIT_LOCK_CONFLICT = 6
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +565,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # non-zero exit so the operator can inspect/repair it.
         sys.stderr.write(f"configuration error: {exc}\n")
         return EXIT_CONFIG_ERROR
+    except PipelineLockError as exc:
+        # Another run holds the single-instance lock. This is an
+        # operational condition, not a pipeline failure, so it gets its
+        # own exit code so cron/supervisors can distinguish "already
+        # running" from a real error.
+        sys.stderr.write(f"lock error: {exc}\n")
+        return EXIT_LOCK_CONFLICT
     except TrestleETLError as exc:
         sys.stderr.write(f"pipeline error: {exc}\n")
         return EXIT_PIPELINE_ERROR
@@ -669,6 +679,20 @@ def _run(
     else:
         effective_state_store = real_state_store
 
+    # ---- Concurrency lock -------------------------------------------
+    # Serialize real runs so two invocations cannot race on the atomic
+    # State_Store replace (overlapping --full-sync runs previously
+    # corrupted progress tracking). Dry runs make no writes, so they are
+    # exempt and never block. Acquired before any HTTP/DB wiring; if
+    # another run holds it, PipelineLockError propagates to main() and
+    # maps to EXIT_LOCK_CONFLICT. The flock is released by the OS on
+    # process exit even if a later construction step raises, so the
+    # explicit release in the finally below is just for tidiness.
+    lock: Optional[PipelineLock] = None
+    if not dry_run:
+        lock = PipelineLock(default_lock_path(settings.state_file_path))
+        lock.acquire()
+
     # ---- HTTP layer -------------------------------------------------
     # Single Session shared between TokenManager (for the OIDC token
     # POST) and TrestleClient (for every API GET). Keeping the pool
@@ -763,6 +787,8 @@ def _run(
         if engine is not None:
             engine.dispose()
         session.close()
+        if lock is not None:
+            lock.release()
 
     return EXIT_OK
 

@@ -109,6 +109,19 @@ class TrestleHTTPError(TrestleETLError):
         )
 
 
+class PipelineLockError(TrestleETLError):
+    """Raised when another pipeline instance already holds the run lock.
+
+    The pipeline serializes itself with an advisory file lock so that two
+    concurrent invocations cannot race on the atomic State_Store replace
+    (which previously corrupted progress tracking when two ``--full-sync``
+    runs overlapped). When the lock is already held, the second invocation
+    raises this error rather than proceeding. The message names the lock
+    path and, when known, the PID recorded in the lock file so an operator
+    can identify the running process.
+    """
+
+
 __all__ = [
     "TrestleETLError",
     "ConfigError",
@@ -116,5 +129,6 @@ __all__ = [
     "AuthError",
     "BulkLoadConfigError",
     "TrestleHTTPError",
+    "PipelineLockError",
     "UsageError",
 ]

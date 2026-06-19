@@ -215,6 +215,29 @@ If the state file is present but malformed, the pipeline exits non-zero and
 does not modify it; back it up, inspect, then repair or delete before
 re-running.
 
+**Single-instance lock.** A real (non-dry-run) run takes an advisory lock at
+`<STATE_FILE_PATH>.lock` (default `./sync_state.json.lock`) before doing any
+work. If another run already holds it, the second invocation exits with code
+**6** and a message naming the lock path and the holder's PID, rather than
+racing on the state file. The lock is an `fcntl` advisory lock, so the OS
+releases it automatically when the holding process exits — including on crash
+or `kill` — so there is no stale lock to clean up. Dry runs make no writes and
+are exempt, so they neither take the lock nor block. Runs pointed at different
+`STATE_FILE_PATH`s use different locks and do not contend.
+
+**Exit codes.**
+
+| Code | Meaning |
+|---|---|
+| 0 | Run completed normally |
+| 1 | Pipeline error (e.g. exhausted HTTP retry budget) |
+| 2 | Usage error (bad flag combination or unparseable `--since`) |
+| 3 | `--reconcile` placeholder (not implemented) |
+| 4 | Configuration error (missing/invalid env var or corrupt state file) |
+| 5 | `--incremental` with no `last_modification_timestamp` watermark |
+| 6 | Another run holds the single-instance lock |
+| 130 | Second Ctrl+C: immediate exit without committing the in-flight batch |
+
 ## Testing
 
 ```bash
