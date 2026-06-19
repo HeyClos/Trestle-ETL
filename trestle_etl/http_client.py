@@ -50,6 +50,20 @@ _BODY_EXCERPT_LIMIT: int = 200
 _HOUR_QUOTA_HEADER: str = "Hour-Quota-Available"
 _RETRY_AFTER_HEADER: str = "Retry-After"
 
+# Transport-level exceptions that are transient and worth retrying on the
+# same budget/backoff schedule as a 504. A multi-hour replication backfill
+# will periodically see the server drop a connection mid-stream
+# (ConnectionResetError surfaces as ChunkedEncodingError when it happens
+# while reading the body, or ConnectionError on connect); a read timeout
+# is likewise transient. These carry no HTTP status, so they are handled
+# separately from the status-code retry branch but consume the same
+# ``_MAX_TRANSIENT_RETRIES`` budget.
+_TRANSIENT_NETWORK_EXCEPTIONS: tuple[type[Exception], ...] = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.Timeout,
+)
+
 
 class TrestleClient:
     """HTTP client for the Trestle WebAPI with auth, retry, and quota handling.
@@ -138,7 +152,37 @@ class TrestleClient:
             token = self._token_mgr.get_token()
             headers = {"Authorization": f"Bearer {token}"}
 
-            response = self._http.get(url, params=params, headers=headers)
+            try:
+                response = self._http.get(url, params=params, headers=headers)
+            except _TRANSIENT_NETWORK_EXCEPTIONS as exc:
+                # Transport-level transient failure (connection reset,
+                # broken chunked body, read/connect timeout). There is no
+                # HTTP status to branch on, but the failure is just as
+                # transient as a 504, so it shares the retry budget and
+                # exponential-backoff schedule. A network error also
+                # clears the consecutive-401 guard: there was no 401 here.
+                previous_was_401 = False
+                if attempt >= _MAX_TRANSIENT_RETRIES:
+                    # Budget exhausted. Surface as TrestleHTTPError with a
+                    # status of 0 (sentinel for "no HTTP response /
+                    # transport failure") so the orchestrator treats it
+                    # like any other exhausted-retry failure and leaves
+                    # the State_Store untouched (Requirement 2.6, 7.4).
+                    raise TrestleHTTPError(
+                        0, f"network error: {exc}", url
+                    ) from exc
+                delay = float(_BACKOFF_SCHEDULE[attempt])
+                logger.warning(
+                    "Retrying after network error %r delay=%s attempt=%d url=%s",
+                    exc,
+                    delay,
+                    attempt,
+                    url,
+                )
+                self._sleep(delay)
+                attempt += 1
+                continue
+
             status = response.status_code
 
             if status == 200:
