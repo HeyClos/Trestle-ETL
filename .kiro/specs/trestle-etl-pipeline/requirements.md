@@ -23,7 +23,7 @@ The Trestle ETL Pipeline is a Python-based data synchronization system that extr
 - **Upsert_Path**: A loader mode that uses `INSERT ... ON DUPLICATE KEY UPDATE` in transactional batches, used during incremental sync.
 - **State_Store**: A local JSON file (`sync_state.json`) persisting the highest committed `ModificationTimestamp`, replication progress, and current `@odata.nextLink` when mid-replication.
 - **Promoted_Columns**: The subset of RESO fields materialized as typed MySQL columns on the `property` table in addition to being present in `raw_data`. The set is: `ListingKey` (primary key), `ListingId`, `MlsStatus`, `InternetEntireListingDisplayYN`, `InternetAddressDisplayYN`, `InternetAutomatedValuationDisplayYN`, `InternetConsumerCommentYN`, `Latitude`, `Longitude`, `ParcelNumber`, `StreetNumberNumeric`, `StreetDirPrefix`, `StreetName`, `StreetSuffix`, `UnitNumber`, `City`, `StateOrProvince`, `PostalCode`, `OriginalListPrice`, `ListPrice`, `ClosePrice`, `ModificationTimestamp`, `OriginalEntryTimestamp`, `PendingTimestamp`, `StatusChangeTimestamp`, `WithdrawnDate`, `CloseDate`, `PhotosChangeTimestamp`, `PhotosCount`, `VideosCount`, `PropertyType`, `PropertySubType`, `PropertySubTypeAdditional`, `StructureType`, `YearBuiltDetails`, `ArchitecturalStyle`, `PropertyAttachedYN`, `Stories`, `LivingArea`, `LotSizeSquareFeet`, `BedroomsTotal`, `BathroomsFull`, `BathroomsHalf`, `BathroomsThreeQuarter`, `GarageSpaces`, `YearBuilt`, `YearBuiltEffective`, `PoolPrivateYN`, `SpaYN`, `DirectionFaces`, `SeniorCommunityYN`, `AssociationYN`, `AssociationAmenities`, `HorseAmenities`, `PetsAllowedYN`, `Furnished`, `ListAgentKey`, `ListOfficeKey`, `ListTeamKey`, `BuyerAgentKey`, `BuyerOfficeKey`, `BuyerTeamKey`.
-- **Raw_Data_Column**: A MySQL native `JSON` column on the Property table that stores the full unmodified RESO record, including fields that are also promoted to typed columns.
+- **Raw_Data_Column**: A MySQL native `JSON` column named `raw_data` on the `property_raw` table that stores the full unmodified RESO record, including fields that are also promoted to typed columns on `property`. It is kept in a separate table (1:1 by `ListingKey`) so searches over the typed `property` columns never read the large JSON payload.
 - **CLI**: The command-line interface exposed via `python -m trestle_etl` with subcommands/flags for full sync, incremental sync, since-override, dry-run, and reconcile.
 - **Quota_Error**: An HTTP 429 response from Trestle indicating the request quota has been exceeded; may include a `Retry-After` header and an `Hour-Quota-Available` header.
 - **Gateway_Timeout**: An HTTP 504 response from Trestle, retried with the same request.
@@ -112,13 +112,14 @@ The Trestle ETL Pipeline is a Python-based data synchronization system that extr
 
 #### Acceptance Criteria
 
-1. THE schema.sql file SHALL define a `property` table using the InnoDB storage engine and the `utf8mb4` character set.
-2. THE `property` table SHALL declare `ListingKey` as `VARCHAR(128) NOT NULL PRIMARY KEY`.
-3. THE `property` table SHALL declare a column named `raw_data` of MySQL native `JSON` type that stores the full unmodified RESO record.
+1. THE schema.sql file SHALL define a `property` table and a `property_raw` table, both using the InnoDB storage engine and the `utf8mb4` character set.
+2. THE `property` and `property_raw` tables SHALL each declare `ListingKey` as `VARCHAR(128) NOT NULL PRIMARY KEY`, with a 1:1 correspondence on `ListingKey`.
+3. THE `property_raw` table SHALL declare a column named `raw_data` of MySQL native `JSON` type that stores the full unmodified RESO record. THE `property` table SHALL NOT carry the `raw_data` payload, so that searches over the typed columns never read the large JSON.
 4. THE `property` table SHALL include, as typed columns, every field listed in the Promoted_Columns set defined in the Glossary.
-5. THE `property` table SHALL include secondary indexes on `ModificationTimestamp`, `MlsStatus`, `PropertyType`, `City`, `PostalCode`, `ListPrice`, and `StateOrProvince`.
-6. THE `property` table SHALL include a `loaded_at` column of type `DATETIME` that records the time at which each row was written or updated by the Loader.
+5. THE `property` table SHALL include a secondary index on every non-`ListingKey` Promoted_Column listed in the Glossary.
+6. THE `property` and `property_raw` tables SHALL each include a `loaded_at` column of type `DATETIME` that records the time at which each row was written or updated by the Loader.
 7. THE Loader SHALL set `loaded_at` to the current UTC wall-clock time at batch-commit time for every row inserted or updated in that batch, and SHALL NOT rely on a MySQL `DEFAULT CURRENT_TIMESTAMP` or `ON UPDATE CURRENT_TIMESTAMP` clause for this value.
+8. THE Loader SHALL write the `property` row and its corresponding `property_raw` row within the same transaction so the two tables never diverge for a committed batch.
 
 ### Requirement 7: Upsert Load Path
 
@@ -146,7 +147,7 @@ The Trestle ETL Pipeline is a Python-based data synchronization system that extr
 4. WHEN a CSV file has been successfully loaded into MySQL, THE Bulk_Load_Path SHALL delete the temporary CSV file.
 5. THE README SHALL document that `LOAD DATA LOCAL INFILE` requires both `local_infile=1` on the MySQL server and `local_infile=True` in the client connection.
 6. IF the MySQL server rejects `LOAD DATA LOCAL INFILE` due to server configuration, THEN THE Loader SHALL raise an error that names the required server and client settings.
-7. WHEN the Bulk_Load_Path begins a full sync, THE Loader SHALL drop all secondary indexes enumerated in Requirement 6.5 (`ModificationTimestamp`, `MlsStatus`, `PropertyType`, `City`, `PostalCode`, `ListPrice`, `StateOrProvince`) from the `property` table before loading and SHALL recreate those indexes after the full sync completes. The `ListingKey` primary key SHALL NOT be dropped.
+7. WHEN the Bulk_Load_Path begins a full sync, THE Loader SHALL drop all secondary indexes enumerated in Requirement 6.5 (one per non-`ListingKey` Promoted_Column) from the `property` table before loading and SHALL recreate those indexes after the full sync completes. The `ListingKey` primary key SHALL NOT be dropped.
 8. WHEN the pipeline starts AND `replication_in_progress=true` in the State_Store, THE Loader SHALL verify the presence of the secondary indexes enumerated in Requirement 6.5 and SHALL recreate any that are missing before proceeding with either resumption or incremental fallback.
 
 ### Requirement 9: State Persistence and Crash Recovery

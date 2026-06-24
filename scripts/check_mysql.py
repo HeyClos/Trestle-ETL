@@ -88,18 +88,21 @@ def main() -> int:
             print(f"  current database = {current_db}")
 
             cur.execute(
-                "SELECT COUNT(*) FROM information_schema.tables "
-                "WHERE table_schema=%s AND table_name='property'",
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema=%s AND table_name IN "
+                "('property','property_raw')",
                 (database,),
             )
-            has_property = cur.fetchone()[0] == 1
-            print(f"  property table present: {has_property}")
-            if not has_property:
-                print(
-                    "  WARN: the `property` table does not exist. Apply "
-                    "trestle_etl/sql/schema.sql before running the pipeline."
-                )
-                exit_code = max(exit_code, 1)
+            present = {r[0] for r in cur.fetchall()}
+            for table in ("property", "property_raw"):
+                ok = table in present
+                print(f"  {table} table present: {ok}")
+                if not ok:
+                    print(
+                        f"  WARN: the `{table}` table does not exist. Apply "
+                        "trestle_etl/sql/schema.sql before running the pipeline."
+                    )
+                    exit_code = max(exit_code, 1)
 
             try:
                 cur.execute("SHOW GRANTS FOR CURRENT_USER()")

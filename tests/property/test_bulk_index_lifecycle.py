@@ -73,23 +73,15 @@ from testcontainers.mysql import MySqlContainer
 
 from trestle_etl.loader.bulk import BulkLoader
 from trestle_etl.state import SyncState
+from trestle_etl.transformer import PROMOTED_COLUMNS
 
 
-# The 7 secondary indexes enumerated by Requirement 6.5 and mirrored in
-# :data:`trestle_etl.loader.bulk._SECONDARY_INDEXES`. We hardcode the
-# set here rather than importing the private tuple so a regression that
-# renamed or dropped an index in the loader would be detected here as
-# a test failure, not silently masked by an aligned private constant.
+# The secondary indexes enumerated by Requirement 6.5: one per non-PK
+# Promoted_Column. Derived from PROMOTED_COLUMNS with the same
+# ``idx_property_<Column>`` convention as schema.sql and the loader, so a
+# regression that renamed or dropped an index surfaces here as a failure.
 REQUIRED_INDEXES = frozenset(
-    {
-        "idx_property_modts",
-        "idx_property_status",
-        "idx_property_type",
-        "idx_property_city",
-        "idx_property_postal",
-        "idx_property_price",
-        "idx_property_state",
-    }
+    f"idx_property_{col}" for col in PROMOTED_COLUMNS if col != "ListingKey"
 )
 
 

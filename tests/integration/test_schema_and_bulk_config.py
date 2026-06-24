@@ -52,21 +52,13 @@ from trestle_etl.errors import BulkLoadConfigError
 from trestle_etl.loader.bulk import BulkLoader
 from trestle_etl.transformer import PROMOTED_COLUMNS
 
-# The seven secondary indexes mandated by Requirement 6.5. Kept here as a
-# module-level set (rather than imported from the loader) so the test acts
-# as an independent check on the schema file: if a future refactor of
-# ``_SECONDARY_INDEXES`` accidentally drops an entry, this test will still
-# fail against the schema, preserving the contract.
+# The secondary indexes mandated by Requirement 6.5: one per non-PK
+# Promoted_Column. Derived from PROMOTED_COLUMNS using the same
+# ``idx_property_<Column>`` convention schema.sql uses, so this test still
+# acts as an independent check that the schema file actually created every
+# expected index (a typo in schema.sql surfaces as a missing index here).
 EXPECTED_INDEXES = frozenset(
-    {
-        "idx_property_modts",
-        "idx_property_status",
-        "idx_property_type",
-        "idx_property_city",
-        "idx_property_postal",
-        "idx_property_price",
-        "idx_property_state",
-    }
+    f"idx_property_{col}" for col in PROMOTED_COLUMNS if col != "ListingKey"
 )
 
 # Resolve schema.sql via the installed package so the test works regardless
@@ -113,15 +105,25 @@ def test_schema_applies_and_columns_present():
             missing = [c for c in PROMOTED_COLUMNS if c not in cols]
             assert not missing, f"Promoted columns missing: {missing}"
 
-            # Req 6.4 and 6.6: raw_data (JSON) and loaded_at (DATETIME)
-            # are present alongside the Promoted_Columns.
-            assert "raw_data" in cols, "raw_data column missing"
+            # Req 6.6: loaded_at present on `property`; raw_data is NOT
+            # here anymore — it lives on the sibling `property_raw` table.
             assert "loaded_at" in cols, "loaded_at column missing"
+            assert "raw_data" not in cols, (
+                "raw_data must live on property_raw, not property"
+            )
 
-            # Req 6.5: all seven secondary indexes are present. We use
+            # Req 6.4: `property_raw` carries ListingKey, raw_data (JSON),
+            # and loaded_at.
+            raw_cols = {
+                c["name"] for c in inspector.get_columns("property_raw")
+            }
+            assert {"ListingKey", "raw_data", "loaded_at"}.issubset(raw_cols), (
+                f"property_raw missing columns; has {raw_cols}"
+            )
+
+            # Req 6.5: a secondary index per non-PK Promoted_Column. We use
             # subset rather than equality because MySQL reports the
-            # PRIMARY index separately (via get_pk_constraint), so
-            # get_indexes returns exactly the seven secondaries we expect.
+            # PRIMARY index separately (via get_pk_constraint).
             index_names = {
                 i["name"] for i in inspector.get_indexes("property") if i.get("name")
             }

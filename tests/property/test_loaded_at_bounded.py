@@ -245,15 +245,16 @@ def rows_batches(draw: st.DrawFn) -> list[Row]:
 
 
 def _truncate_property_table(engine: Engine) -> None:
-    """Remove all rows from ``property`` between examples.
+    """Remove all rows from both data tables between examples.
 
     ``TRUNCATE TABLE`` is faster than ``DELETE FROM`` on MySQL and
-    resets auto-increment counters; neither matters for this test, but
-    ``TRUNCATE`` has the semantically cleaner "return the table to its
-    post-schema-apply state" guarantee that we want between examples.
+    returns each table to its post-schema-apply state. Both ``property``
+    and ``property_raw`` are cleared so the upsert loader (which writes
+    both) starts each example from empty.
     """
     with engine.begin() as conn:
         conn.exec_driver_sql("TRUNCATE TABLE property")
+        conn.exec_driver_sql("TRUNCATE TABLE property_raw")
 
 
 # ---------------------------------------------------------------------------

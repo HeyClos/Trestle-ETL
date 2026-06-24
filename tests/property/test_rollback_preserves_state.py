@@ -106,23 +106,34 @@ def _execute_schema(engine: Engine) -> None:
 
 
 def _seed_row(engine: Engine) -> None:
-    """Insert one fixed row so pre-batch snapshots are non-empty."""
+    """Insert one fixed row (into both tables) so snapshots are non-empty."""
     seed_raw = {"ListingKey": "SEED-ROW"}
     seed_model = validate(seed_raw)
     assert seed_model is not None, "seed record must validate"
     promoted, raw_data_json = to_row(seed_raw, seed_model)
 
-    columns = (*PROMOTED_COLUMNS, "raw_data", "loaded_at")
-    params: dict[str, Any] = dict(zip(PROMOTED_COLUMNS, promoted))
-    params["raw_data"] = raw_data_json
-    params["loaded_at"] = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    loaded_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    insert_sql = (
-        f"INSERT INTO property ({', '.join(columns)}) "
-        f"VALUES ({', '.join(':' + c for c in columns)})"
+    prop_columns = (*PROMOTED_COLUMNS, "loaded_at")
+    prop_params: dict[str, Any] = dict(zip(PROMOTED_COLUMNS, promoted))
+    prop_params["loaded_at"] = loaded_at
+    prop_sql = (
+        f"INSERT INTO property ({', '.join(prop_columns)}) "
+        f"VALUES ({', '.join(':' + c for c in prop_columns)})"
+    )
+
+    raw_params: dict[str, Any] = {
+        "ListingKey": promoted[0],
+        "raw_data": raw_data_json,
+        "loaded_at": loaded_at,
+    }
+    raw_sql = (
+        "INSERT INTO property_raw (ListingKey, raw_data, loaded_at) "
+        "VALUES (:ListingKey, :raw_data, :loaded_at)"
     )
     with engine.begin() as conn:
-        conn.execute(text(insert_sql), params)
+        conn.execute(text(prop_sql), prop_params)
+        conn.execute(text(raw_sql), raw_params)
 
 
 @pytest.fixture(scope="module")
@@ -209,18 +220,21 @@ def row_batches(
 
 
 def _snapshot_property_table(engine: Engine) -> list[tuple[Any, ...]]:
-    """Return a deterministic snapshot of the ``property`` table.
+    """Return a deterministic snapshot of the property data.
 
-    Columns chosen to cover every row component the loader touches:
-    the primary key, the raw-data JSON payload, and the loader-supplied
-    ``loaded_at`` stamp. Results are sorted by ``ListingKey`` so two
-    snapshots with the same logical contents compare equal regardless
-    of MySQL's row ordering.
+    Columns chosen to cover every row component the loader touches: the
+    primary key, the raw-data JSON payload (now on ``property_raw``), and
+    the loader-supplied ``loaded_at`` stamp. The two tables are joined on
+    ``ListingKey`` so the snapshot still reflects the full logical row.
+    Results are sorted by ``ListingKey`` so two snapshots with the same
+    logical contents compare equal regardless of MySQL's row ordering.
     """
     with engine.connect() as conn:
         result = conn.exec_driver_sql(
-            "SELECT ListingKey, raw_data, loaded_at FROM property "
-            "ORDER BY ListingKey"
+            "SELECT p.ListingKey, r.raw_data, p.loaded_at "
+            "FROM property p "
+            "LEFT JOIN property_raw r ON p.ListingKey = r.ListingKey "
+            "ORDER BY p.ListingKey"
         )
         return [tuple(row) for row in result.fetchall()]
 

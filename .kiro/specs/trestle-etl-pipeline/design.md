@@ -426,84 +426,39 @@ Fields correspond one-to-one with Promoted_Columns. Only listed fields are typed
 | `BuyerOfficeKey` | `str \| None` | |
 | `BuyerTeamKey` | `str \| None` | |
 
-### MySQL `property` Table Schema
+### MySQL Schema
+
+The data is split across two tables so searches over typed columns never
+read the large JSON payload:
+
+* `property` — the typed Promoted_Columns plus `loaded_at`, with a
+  secondary index on every non-PK Promoted_Column. No `raw_data`.
+* `property_raw` — `ListingKey` (PK), `raw_data JSON`, `loaded_at`,
+  1:1 with `property`.
 
 ```sql
 CREATE TABLE property (
     ListingKey                              VARCHAR(128) NOT NULL PRIMARY KEY,
-    ListingId                               VARCHAR(128) NULL,
-    MlsStatus                               VARCHAR(64) NULL,
-    InternetEntireListingDisplayYN          TINYINT(1) NULL,
-    InternetAddressDisplayYN                TINYINT(1) NULL,
-    InternetAutomatedValuationDisplayYN     TINYINT(1) NULL,
-    InternetConsumerCommentYN               TINYINT(1) NULL,
-    Latitude                                DECIMAL(10,7) NULL,
-    Longitude                               DECIMAL(10,7) NULL,
-    ParcelNumber                            VARCHAR(64) NULL,
-    StreetNumberNumeric                     INT NULL,
-    StreetDirPrefix                         VARCHAR(16) NULL,
-    StreetName                              VARCHAR(128) NULL,
-    StreetSuffix                            VARCHAR(32) NULL,
-    UnitNumber                              VARCHAR(32) NULL,
-    City                                    VARCHAR(64) NULL,
-    StateOrProvince                         VARCHAR(2) NULL,
-    PostalCode                              VARCHAR(16) NULL,
-    OriginalListPrice                       DECIMAL(14,2) NULL,
-    ListPrice                               DECIMAL(14,2) NULL,
-    ClosePrice                              DECIMAL(14,2) NULL,
-    ModificationTimestamp                   DATETIME(6) NULL,
-    OriginalEntryTimestamp                  DATETIME(6) NULL,
-    PendingTimestamp                        DATETIME(6) NULL,
-    StatusChangeTimestamp                   DATETIME(6) NULL,
-    WithdrawnDate                           DATE NULL,
-    CloseDate                               DATE NULL,
-    PhotosChangeTimestamp                   DATETIME(6) NULL,
-    PhotosCount                             INT NULL,
-    VideosCount                             INT NULL,
-    PropertyType                            VARCHAR(64) NULL,
-    PropertySubType                         VARCHAR(64) NULL,
-    PropertySubTypeAdditional               VARCHAR(128) NULL,
-    StructureType                           VARCHAR(128) NULL,
-    YearBuiltDetails                        VARCHAR(128) NULL,
-    ArchitecturalStyle                      VARCHAR(128) NULL,
-    PropertyAttachedYN                      TINYINT(1) NULL,
-    Stories                                 SMALLINT NULL,
-    LivingArea                              DECIMAL(10,2) NULL,
-    LotSizeSquareFeet                       DECIMAL(12,2) NULL,
-    BedroomsTotal                           SMALLINT NULL,
-    BathroomsFull                           SMALLINT NULL,
-    BathroomsHalf                           SMALLINT NULL,
-    BathroomsThreeQuarter                   SMALLINT NULL,
-    GarageSpaces                            DECIMAL(6,2) NULL,
-    YearBuilt                               SMALLINT NULL,
-    YearBuiltEffective                      SMALLINT NULL,
-    PoolPrivateYN                           TINYINT(1) NULL,
-    SpaYN                                   TINYINT(1) NULL,
-    DirectionFaces                          VARCHAR(32) NULL,
-    SeniorCommunityYN                       TINYINT(1) NULL,
-    AssociationYN                           TINYINT(1) NULL,
-    AssociationAmenities                    VARCHAR(512) NULL,
-    HorseAmenities                          VARCHAR(512) NULL,
-    PetsAllowedYN                           TINYINT(1) NULL,
-    Furnished                               VARCHAR(32) NULL,
-    ListAgentKey                            VARCHAR(128) NULL,
-    ListOfficeKey                           VARCHAR(128) NULL,
-    ListTeamKey                             VARCHAR(128) NULL,
-    BuyerAgentKey                           VARCHAR(128) NULL,
-    BuyerOfficeKey                          VARCHAR(128) NULL,
-    BuyerTeamKey                            VARCHAR(128) NULL,
-    raw_data                                JSON NOT NULL,
+    -- ... all other Promoted_Columns as typed columns ...
     loaded_at                               DATETIME(6) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE INDEX idx_property_modts      ON property(ModificationTimestamp);
-CREATE INDEX idx_property_status     ON property(MlsStatus);
-CREATE INDEX idx_property_type       ON property(PropertyType);
-CREATE INDEX idx_property_city       ON property(City);
-CREATE INDEX idx_property_postal     ON property(PostalCode);
-CREATE INDEX idx_property_price      ON property(ListPrice);
-CREATE INDEX idx_property_state      ON property(StateOrProvince);
+CREATE TABLE property_raw (
+    ListingKey      VARCHAR(128) NOT NULL PRIMARY KEY,
+    raw_data        JSON NOT NULL,
+    loaded_at       DATETIME(6) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One secondary index per non-PK Promoted_Column, named
+-- idx_property_<ColumnName>. The two VARCHAR(512) multi-select columns
+-- (AssociationAmenities, HorseAmenities) use a 255-char prefix.
+-- See trestle_etl/sql/schema.sql for the full list.
 ```
+
+Both loaders write the `property` row and its `property_raw` row in the
+same transaction, so a committed batch never leaves the tables divergent.
+The Bulk_Load_Path writes one CSV per table per page and runs two
+`LOAD DATA LOCAL INFILE` statements inside one transaction.
 
 `loaded_at` is `NOT NULL` without a `DEFAULT CURRENT_TIMESTAMP`; the Loader supplies the value at commit time per Requirement 6.7.
 

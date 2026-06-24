@@ -173,7 +173,16 @@ def row_batches(
 # ``loaded_at`` because the loader intentionally updates it on every
 # commit (Requirement 6.7); its divergence across two applies is
 # expected and does not violate logical idempotence (Requirement 7.6).
-_COMPARE_COLUMNS = ", ".join((*PROMOTED_COLUMNS, "raw_data"))
+# The promoted columns come from `property`; ``raw_data`` is joined in
+# from `property_raw` (the raw_data split).
+_COMPARE_QUERY = (
+    "SELECT "
+    + ", ".join(f"p.{c}" for c in PROMOTED_COLUMNS)
+    + ", r.raw_data "
+    + "FROM property p "
+    + "LEFT JOIN property_raw r ON p.ListingKey = r.ListingKey "
+    + "ORDER BY p.ListingKey"
+)
 
 
 @given(rows=row_batches())
@@ -186,26 +195,26 @@ def test_upsert_idempotence(rows: list[Row], mysql_engine) -> None:
     """Property 17 (Requirement 7.6).
 
     Applying the same batch through :class:`UpsertLoader` twice must
-    leave the ``property`` table in the same logical state as a single
-    apply. Because the loader stamps ``loaded_at`` at commit time, that
-    single column is expected to change between the two applies and is
-    excluded from the comparison. Every other column - including the
-    primary key set, every promoted column, and the ``raw_data`` JSON
-    payload - must be byte-for-byte identical after the second apply.
+    leave the data in the same logical state as a single apply. Because
+    the loader stamps ``loaded_at`` at commit time, that single column is
+    expected to change between the two applies and is excluded from the
+    comparison. Every other column - including the primary key set, every
+    promoted column, and the ``raw_data`` JSON payload (joined from
+    ``property_raw``) - must be byte-for-byte identical after the second
+    apply.
     """
-    # Fresh table for every Hypothesis example. ``TRUNCATE`` is faster
+    # Fresh tables for every Hypothesis example. ``TRUNCATE`` is faster
     # than ``DELETE FROM`` and resets any secondary-index bookkeeping.
     with mysql_engine.begin() as conn:
         conn.exec_driver_sql("TRUNCATE TABLE property")
+        conn.exec_driver_sql("TRUNCATE TABLE property_raw")
 
     loader = UpsertLoader(mysql_engine, batch_size=len(rows))
 
     # First apply.
     loader.write_batch(rows)
     with mysql_engine.connect() as conn:
-        query = text(
-            f"SELECT {_COMPARE_COLUMNS} FROM property ORDER BY ListingKey"
-        )
+        query = text(_COMPARE_QUERY)
         result1 = [tuple(row) for row in conn.execute(query).fetchall()]
 
     # Second apply of the exact same batch.

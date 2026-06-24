@@ -41,12 +41,19 @@ _MAX_BATCH_SIZE: Final[int] = 5_000
 # Default batch size from Requirement 7.2.
 _DEFAULT_BATCH_SIZE: Final[int] = 1_000
 
-# Columns that participate in the INSERT: every promoted column, plus the
-# ``raw_data`` JSON payload and the loader-supplied ``loaded_at`` stamp.
-# Built once at import time so the SQL statement itself can also be
-# constructed once and reused across batches.
-_ALL_COLUMNS: Final[tuple[str, ...]] = (
+# Columns written to the `property` table: every promoted column plus the
+# loader-supplied ``loaded_at`` stamp. ``raw_data`` no longer lives here —
+# it is written to the sibling ``property_raw`` table so the hot search
+# table stays narrow.
+_PROPERTY_COLUMNS: Final[tuple[str, ...]] = (
     *PROMOTED_COLUMNS,
+    "loaded_at",
+)
+
+# Columns written to the `property_raw` table: the shared primary key, the
+# full JSON payload, and the same ``loaded_at`` stamp for traceability.
+_RAW_COLUMNS: Final[tuple[str, ...]] = (
+    "ListingKey",
     "raw_data",
     "loaded_at",
 )
@@ -58,35 +65,36 @@ _ALL_COLUMNS: Final[tuple[str, ...]] = (
 _MOD_TS_INDEX: Final[int] = PROMOTED_COLUMNS.index("ModificationTimestamp")
 
 
-def _build_upsert_sql() -> str:
-    """Construct the parameterized upsert statement once at import time.
+def _build_upsert_sql(table: str, columns: tuple[str, ...]) -> str:
+    """Construct a parameterized upsert statement for ``table``.
 
-    The statement is dynamically built from :data:`PROMOTED_COLUMNS` so that
-    adding a new promoted field is a one-place schema change
-    (Requirement 7.1). Column identifiers are interpolated from a trusted
-    constant; row values are bound through SQLAlchemy parameters and are
-    never concatenated into the SQL string.
+    The statement is dynamically built from ``columns`` so that adding a
+    new promoted field is a one-place schema change (Requirement 7.1).
+    Column identifiers are interpolated from trusted constants; row values
+    are bound through SQLAlchemy parameters and are never concatenated into
+    the SQL string.
 
     The ON DUPLICATE KEY UPDATE clause covers every column except the
     primary key (``ListingKey``): rewriting the PK to its own value would
-    be a no-op, and MySQL 8's optimizer is slightly cleaner when it is
-    omitted. ``VALUES(col)`` is used rather than the newer row-alias
+    be a no-op. ``VALUES(col)`` is used rather than the newer row-alias
     syntax so the statement stays compatible with MySQL 5.7 as well as 8.x.
     """
-    columns_sql = ", ".join(_ALL_COLUMNS)
-    placeholders_sql = ", ".join(f":{col}" for col in _ALL_COLUMNS)
-    update_targets = [col for col in _ALL_COLUMNS if col != "ListingKey"]
+    columns_sql = ", ".join(columns)
+    placeholders_sql = ", ".join(f":{col}" for col in columns)
+    update_targets = [col for col in columns if col != "ListingKey"]
     update_sql = ", ".join(f"{col} = VALUES({col})" for col in update_targets)
     return (
-        f"INSERT INTO property ({columns_sql}) "
+        f"INSERT INTO {table} ({columns_sql}) "
         f"VALUES ({placeholders_sql}) "
         f"ON DUPLICATE KEY UPDATE {update_sql}"
     )
 
 
-# Pre-built once; SQLAlchemy will re-compile it per engine but the Python
-# string assembly (non-trivial with 30+ columns) happens only at import.
-_UPSERT_SQL: Final[str] = _build_upsert_sql()
+# Pre-built once; SQLAlchemy will re-compile per engine but the Python
+# string assembly happens only at import. One statement per table; both
+# run inside a single transaction per batch (Requirement 7.3).
+_UPSERT_PROPERTY_SQL: Final[str] = _build_upsert_sql("property", _PROPERTY_COLUMNS)
+_UPSERT_RAW_SQL: Final[str] = _build_upsert_sql("property_raw", _RAW_COLUMNS)
 
 
 class UpsertLoader:
@@ -155,16 +163,26 @@ class UpsertLoader:
         # a MySQL DATETIME(6) with microsecond precision.
         loaded_at = datetime.now(timezone.utc)
 
-        params: list[dict[str, object]] = []
+        property_params: list[dict[str, object]] = []
+        raw_params: list[dict[str, object]] = []
         max_mod_ts: datetime | None = None
         for promoted, raw_data_json in rows:
-            # Pair the promoted-column names with the tuple values the
-            # transformer produced; append ``raw_data`` and ``loaded_at``
-            # so every bind parameter in the SQL is supplied.
-            row_params: dict[str, object] = dict(zip(PROMOTED_COLUMNS, promoted))
-            row_params["raw_data"] = raw_data_json
-            row_params["loaded_at"] = loaded_at
-            params.append(row_params)
+            # Typed columns for the `property` table: promoted values plus
+            # ``loaded_at``. ``raw_data`` is intentionally absent here.
+            prop_row: dict[str, object] = dict(zip(PROMOTED_COLUMNS, promoted))
+            prop_row["loaded_at"] = loaded_at
+            property_params.append(prop_row)
+
+            # The `property_raw` row shares the primary key and carries the
+            # JSON payload. ``ListingKey`` is the first promoted column by
+            # the PROMOTED_COLUMNS ordering contract.
+            raw_params.append(
+                {
+                    "ListingKey": promoted[0],
+                    "raw_data": raw_data_json,
+                    "loaded_at": loaded_at,
+                }
+            )
 
             # Track the running max ModificationTimestamp so the caller
             # can advance ``last_modification_timestamp`` in the state
@@ -175,15 +193,17 @@ class UpsertLoader:
             ):
                 max_mod_ts = row_mod_ts
 
-        statement = text(_UPSERT_SQL)
+        property_stmt = text(_UPSERT_PROPERTY_SQL)
+        raw_stmt = text(_UPSERT_RAW_SQL)
 
         # ``engine.begin()`` is the canonical SQLAlchemy 2.0 transaction
         # scope: it issues BEGIN on entry, COMMIT on clean exit, and
-        # ROLLBACK on any exception before re-raising. That gives us
-        # Requirements 7.3 and 7.4 for free, without hand-rolling a
-        # try/except/rollback block.
+        # ROLLBACK on any exception before re-raising. Both table writes
+        # run inside the SAME transaction so a batch is all-or-nothing
+        # across `property` and `property_raw` (Requirements 7.3, 7.4).
         with self._engine.begin() as connection:
-            connection.execute(statement, params)
+            connection.execute(property_stmt, property_params)
+            connection.execute(raw_stmt, raw_params)
 
         logger.info(
             "Upserted batch of %d rows (max ModificationTimestamp=%s)",

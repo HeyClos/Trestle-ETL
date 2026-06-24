@@ -26,8 +26,9 @@ SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent / "trestle_etl" / "sql" / "schema.sql"
 )
 
-# Table the schema creates; used by the optional --recreate drop step.
-_TABLE = "property"
+# Tables the schema creates; used by the optional --recreate drop step.
+# Order matters only cosmetically (no FK constraints between them).
+_TABLES = ("property", "property_raw")
 
 # MySQL error codes we treat as "already applied" rather than failures.
 #   1050 = ER_TABLE_EXISTS_ERROR
@@ -94,11 +95,11 @@ def main() -> int:
     with conn:
         with conn.cursor() as cur:
             if args.recreate:
-                # Drop the table outright so a breaking column change is
-                # picked up cleanly. Indexes are dropped with the table,
-                # so there is no need to drop them individually.
-                print(f"--recreate: DROP TABLE IF EXISTS {_TABLE}")
-                cur.execute(f"DROP TABLE IF EXISTS {_TABLE}")
+                # Drop the tables outright so a breaking column change is
+                # picked up cleanly. Indexes are dropped with the tables.
+                for table in _TABLES:
+                    print(f"--recreate: DROP TABLE IF EXISTS {table}")
+                    cur.execute(f"DROP TABLE IF EXISTS {table}")
             for i, stmt in enumerate(statements, 1):
                 label = stmt.splitlines()[0][:80]
                 try:

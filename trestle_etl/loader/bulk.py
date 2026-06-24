@@ -63,32 +63,37 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 # ---------------------------------------------------------------------------
 
-# The table receiving the bulk load. Kept as a named constant to keep the
+# The tables receiving the bulk load. Kept as named constants to keep the
 # DDL and DML statements below textually aligned with the schema file.
 _TABLE = "property"
+_TABLE_RAW = "property_raw"
 
-# Column order written to the CSV and therefore to the LOAD DATA column
-# list. We always write the Promoted_Columns (defined in the transformer),
-# followed by ``raw_data`` and ``loaded_at``. Keeping this single ordered
-# tuple as the source of truth means a schema change in one place
-# propagates to CSV generation, the LOAD DATA statement, and any future
-# introspection tests. The LOAD DATA column list must match this order
-# exactly because the statement uses positional rather than named fields.
-_CSV_COLUMNS: Final[tuple[str, ...]] = PROMOTED_COLUMNS + ("raw_data", "loaded_at")
+# CSV column order for each table. We always write the columns in a fixed
+# order and pass a matching column list to LOAD DATA (which is positional).
+# Keeping these tuples as the single source of truth means a schema change
+# in one place propagates to CSV generation and the LOAD DATA statements.
+#   * `property`     gets the promoted columns plus loaded_at (no raw_data).
+#   * `property_raw` gets the shared PK, the JSON payload, and loaded_at.
+_PROPERTY_CSV_COLUMNS: Final[tuple[str, ...]] = PROMOTED_COLUMNS + ("loaded_at",)
+_RAW_CSV_COLUMNS: Final[tuple[str, ...]] = ("ListingKey", "raw_data", "loaded_at")
 
-# The seven secondary indexes enumerated in Requirement 6.5. Each entry is
-# (index_name, column_name); names match those declared in
-# trestle_etl/sql/schema.sql so that introspection via ``information_schema``
-# lines up with the names used in DROP/CREATE statements. The PK index on
-# ListingKey is deliberately excluded (Requirement 8.7 preserves the PK).
-_SECONDARY_INDEXES: Final[tuple[tuple[str, str], ...]] = (
-    ("idx_property_modts", "ModificationTimestamp"),
-    ("idx_property_status", "MlsStatus"),
-    ("idx_property_type", "PropertyType"),
-    ("idx_property_city", "City"),
-    ("idx_property_postal", "PostalCode"),
-    ("idx_property_price", "ListPrice"),
-    ("idx_property_state", "StateOrProvince"),
+# Prefix lengths for the VARCHAR(512) multi-select columns, matching the
+# prefix indexes declared in schema.sql. Every other column is indexed in
+# full (prefix ``None``).
+_INDEX_PREFIX_LENGTHS: Final[dict[str, int]] = {
+    "AssociationAmenities": 255,
+    "HorseAmenities": 255,
+}
+
+# One secondary index per non-PK Promoted_Column (Requirement 6.5), derived
+# from PROMOTED_COLUMNS so the drop/recreate set can never drift from the
+# schema. Each entry is (index_name, column_name, prefix_len_or_None). The
+# PK index on ListingKey is deliberately excluded (Requirement 8.7 preserves
+# the PK). ``property_raw`` carries only its PK, so it has no entries here.
+_SECONDARY_INDEXES: Final[tuple[tuple[str, str, "int | None"], ...]] = tuple(
+    (f"idx_property_{col}", col, _INDEX_PREFIX_LENGTHS.get(col))
+    for col in PROMOTED_COLUMNS
+    if col != "ListingKey"
 )
 
 # MySQL error codes raised when LOAD DATA LOCAL INFILE is rejected. These
@@ -231,11 +236,18 @@ def _drop_index(engine: Engine, index_name: str) -> None:
         conn.execute(text(f"DROP INDEX {index_name} ON {_TABLE}"))
 
 
-def _create_index(engine: Engine, index_name: str, column: str) -> None:
-    """Create a single secondary index (idempotent guard done by caller)."""
+def _create_index(
+    engine: Engine, index_name: str, column: str, prefix: "int | None" = None
+) -> None:
+    """Create a single secondary index (idempotent guard done by caller).
+
+    ``prefix`` mirrors the prefix length used in schema.sql for the long
+    VARCHAR(512) multi-select columns; ``None`` indexes the full column.
+    """
+    col_expr = f"{column}({prefix})" if prefix else column
     with engine.begin() as conn:
         conn.execute(
-            text(f"CREATE INDEX {index_name} ON {_TABLE}({column})")
+            text(f"CREATE INDEX {index_name} ON {_TABLE}({col_expr})")
         )
 
 
@@ -346,7 +358,7 @@ class BulkLoader:
             return
         self._fresh_full_sync = True
         existing = _existing_index_names(self._engine)
-        for name, _column in _SECONDARY_INDEXES:
+        for name, _column, _prefix in _SECONDARY_INDEXES:
             if name in existing:
                 logger.info("BulkLoader: dropping secondary index %s", name)
                 _drop_index(self._engine, name)
@@ -376,7 +388,7 @@ class BulkLoader:
         if not state.replication_in_progress:
             return
         existing = _existing_index_names(self._engine)
-        for name, column in _SECONDARY_INDEXES:
+        for name, column, prefix in _SECONDARY_INDEXES:
             if name not in existing:
                 logger.info(
                     "BulkLoader: resume path recreating missing index %s "
@@ -384,7 +396,7 @@ class BulkLoader:
                     name,
                     column,
                 )
-                _create_index(self._engine, name, column)
+                _create_index(self._engine, name, column, prefix)
 
     # --------------------------------------------------------------- batches
 
@@ -426,12 +438,15 @@ class BulkLoader:
         loaded_at = datetime.now(UTC)
 
         tmpdir = Path(tempfile.mkdtemp(prefix="trestle-bulk-"))
-        csv_path = tmpdir / "batch.csv"
+        property_csv = tmpdir / "property.csv"
+        raw_csv = tmpdir / "property_raw.csv"
         try:
-            max_mod_ts = self._write_csv(rows, csv_path, loaded_at)
-            self._load_csv(csv_path)
+            max_mod_ts = self._write_csvs(
+                rows, property_csv, raw_csv, loaded_at
+            )
+            self._load_csvs(property_csv, raw_csv)
         finally:
-            # Remove the CSV and its parent directory whether or not the
+            # Remove the CSVs and their parent directory whether or not the
             # load succeeded (Requirement 8.4). On the failure path this
             # prevents accumulation of orphaned temp files under /tmp on
             # long-running systems.
@@ -442,35 +457,47 @@ class BulkLoader:
             max_modification_timestamp=max_mod_ts,
         )
 
-    def _write_csv(
+    def _write_csvs(
         self,
         rows: list[Row],
-        csv_path: Path,
+        property_csv: Path,
+        raw_csv: Path,
         loaded_at: datetime,
     ) -> datetime:
-        """Serialize ``rows`` to ``csv_path`` and return the max ModTs.
+        """Serialize ``rows`` to two CSV files and return the max ModTs.
 
-        The promoted-columns tuple carries ``ModificationTimestamp`` at a
-        known index (the second element, matching the order in
-        :data:`PROMOTED_COLUMNS`); we scan it to produce the
+        Writes one CSV for the `property` table (promoted columns +
+        ``loaded_at``) and one for `property_raw` (``ListingKey`` +
+        ``raw_data`` + ``loaded_at``) in a single pass over ``rows``. The
+        promoted-columns tuple carries ``ModificationTimestamp`` at a
+        known index; we scan it here to produce the
         :class:`BatchResult`'s ``max_modification_timestamp`` without a
         second pass.
         """
-        # Resolve the index once rather than per-row.
         mod_ts_index = PROMOTED_COLUMNS.index("ModificationTimestamp")
+        listing_key_index = PROMOTED_COLUMNS.index("ListingKey")
         max_mod_ts: datetime | None = None
         # utf-8 bytes, newline='' so the OS doesn't translate our \n into
         # \r\n on any platform (our LINES TERMINATED BY is exactly \n).
-        with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+        with open(property_csv, "w", encoding="utf-8", newline="") as pfh, open(
+            raw_csv, "w", encoding="utf-8", newline=""
+        ) as rfh:
             for promoted, raw_data_json in rows:
                 ts = promoted[mod_ts_index]
                 if ts is not None and (max_mod_ts is None or ts > max_mod_ts):
                     max_mod_ts = ts
-                # CSV column order = PROMOTED_COLUMNS + (raw_data, loaded_at).
-                csv_values: tuple[Any, ...] = (*promoted, raw_data_json, loaded_at)
-                fh.write(_format_row(csv_values))
-            fh.flush()
-            os.fsync(fh.fileno())
+                # property CSV: promoted columns + loaded_at.
+                pfh.write(_format_row((*promoted, loaded_at)))
+                # property_raw CSV: ListingKey, raw_data, loaded_at.
+                rfh.write(
+                    _format_row(
+                        (promoted[listing_key_index], raw_data_json, loaded_at)
+                    )
+                )
+            pfh.flush()
+            os.fsync(pfh.fileno())
+            rfh.flush()
+            os.fsync(rfh.fileno())
         if max_mod_ts is None:
             # Defensive: a page where every row lacks ModificationTimestamp
             # would leave the state unchanged. Use UTC epoch as the
@@ -479,32 +506,46 @@ class BulkLoader:
             max_mod_ts = datetime.min.replace(tzinfo=UTC)
         return max_mod_ts
 
-    def _load_csv(self, csv_path: Path) -> None:
-        """Execute ``LOAD DATA LOCAL INFILE`` for a single CSV file.
+    def _load_csvs(self, property_csv: Path, raw_csv: Path) -> None:
+        """Bulk-load both CSV files inside a single transaction.
 
-        The path is interpolated into the SQL text because MySQL does not
-        accept a placeholder in the ``LOCAL INFILE`` position. We control
-        the path completely (it comes from :func:`tempfile.mkdtemp`), so
-        interpolation is safe; defensive escaping of backslash and
-        single-quote guards against any future path sources.
+        Each ``LOAD DATA LOCAL INFILE`` path is interpolated into the SQL
+        text because MySQL does not accept a placeholder in the
+        ``LOCAL INFILE`` position. We control the paths completely (they
+        come from :func:`tempfile.mkdtemp`), so interpolation is safe;
+        defensive escaping of backslash and single-quote guards against
+        any future path sources. Both loads run in one ``engine.begin()``
+        block so a batch is all-or-nothing across `property` and
+        `property_raw` (Requirement 3.9, 7.6).
         """
+        property_stmt = self._build_load_stmt(
+            property_csv, _TABLE, _PROPERTY_CSV_COLUMNS
+        )
+        raw_stmt = self._build_load_stmt(raw_csv, _TABLE_RAW, _RAW_CSV_COLUMNS)
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(text(property_stmt))
+                conn.execute(text(raw_stmt))
+        except DBAPIError as exc:
+            if _is_local_infile_rejection(exc):
+                _raise_bulk_load_config_error(exc)
+            raise
+
+    @staticmethod
+    def _build_load_stmt(
+        csv_path: Path, table: str, columns: tuple[str, ...]
+    ) -> str:
+        """Build one ``LOAD DATA LOCAL INFILE`` statement for ``table``."""
         escaped_path = str(csv_path).replace("\\", "\\\\").replace("'", "\\'")
-        column_list = ", ".join(_CSV_COLUMNS)
-        statement = (
+        column_list = ", ".join(columns)
+        return (
             f"LOAD DATA LOCAL INFILE '{escaped_path}' "
-            f"REPLACE INTO TABLE {_TABLE} "
+            f"REPLACE INTO TABLE {table} "
             f"CHARACTER SET utf8mb4 "
             f"FIELDS TERMINATED BY ',' ENCLOSED BY '\"' ESCAPED BY '\\\\' "
             f"LINES TERMINATED BY '\\n' "
             f"({column_list})"
         )
-        try:
-            with self._engine.begin() as conn:
-                conn.execute(text(statement))
-        except DBAPIError as exc:
-            if _is_local_infile_rejection(exc):
-                _raise_bulk_load_config_error(exc)
-            raise
 
     # ----------------------------------------------------------------- close
 
@@ -521,14 +562,14 @@ class BulkLoader:
         belongs to the caller that constructed it.
         """
         existing = _existing_index_names(self._engine)
-        for name, column in _SECONDARY_INDEXES:
+        for name, column, prefix in _SECONDARY_INDEXES:
             if name not in existing:
                 logger.info(
                     "BulkLoader.close: recreating index %s on column %s",
                     name,
                     column,
                 )
-                _create_index(self._engine, name, column)
+                _create_index(self._engine, name, column, prefix)
 
 
 __all__ = ["BulkLoader"]

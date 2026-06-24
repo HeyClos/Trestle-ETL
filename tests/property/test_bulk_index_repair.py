@@ -64,22 +64,28 @@ from testcontainers.mysql import MySqlContainer
 
 from trestle_etl.loader.bulk import BulkLoader
 from trestle_etl.state import SyncState
+from trestle_etl.transformer import PROMOTED_COLUMNS
 
 
-# Mapping from required secondary-index name to the column it indexes.
-# Mirrors Requirement 6.5 / the CREATE INDEX block at the bottom of
-# trestle_etl/sql/schema.sql exactly. Keeping this local (rather than
-# importing the private tuple from the loader module) makes the test an
-# independent second source of truth: a typo in either side surfaces as
-# a test failure rather than a silent drift.
+# Mapping from required secondary-index name to the column it indexes —
+# one per non-PK Promoted_Column (Requirement 6.5), derived from
+# PROMOTED_COLUMNS with the same ``idx_property_<Column>`` convention as
+# schema.sql and the loader. Deriving it here (rather than importing the
+# loader's private tuple) keeps the test an independent second source of
+# truth: a drift between the convention and the loader surfaces as a
+# failure rather than passing silently.
 _INDEX_DEFINITIONS: dict[str, str] = {
-    "idx_property_modts": "ModificationTimestamp",
-    "idx_property_status": "MlsStatus",
-    "idx_property_type": "PropertyType",
-    "idx_property_city": "City",
-    "idx_property_postal": "PostalCode",
-    "idx_property_price": "ListPrice",
-    "idx_property_state": "StateOrProvince",
+    f"idx_property_{col}": col
+    for col in PROMOTED_COLUMNS
+    if col != "ListingKey"
+}
+
+# Prefix lengths for the VARCHAR(512) multi-select columns, matching
+# schema.sql so the test's CREATE INDEX statements stay within the index
+# key-length limit and align with the loader's recreate behavior.
+_INDEX_PREFIX_LENGTHS: dict[str, int] = {
+    "AssociationAmenities": 255,
+    "HorseAmenities": 255,
 }
 
 REQUIRED_INDEXES: tuple[str, ...] = tuple(_INDEX_DEFINITIONS.keys())
@@ -140,8 +146,10 @@ def _restore_all_indexes(engine) -> None:
     with engine.begin() as conn:
         for name, column in _INDEX_DEFINITIONS.items():
             if name not in existing:
+                prefix = _INDEX_PREFIX_LENGTHS.get(column)
+                col_expr = f"{column}({prefix})" if prefix else column
                 conn.exec_driver_sql(
-                    f"CREATE INDEX {name} ON property({column})"
+                    f"CREATE INDEX {name} ON property({col_expr})"
                 )
 
 

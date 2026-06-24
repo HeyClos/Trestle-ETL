@@ -128,11 +128,12 @@ def test_bulk_load_file_lifecycle(n_rows: int) -> None:
     MUST:
 
     1. Call :func:`tempfile.mkdtemp` exactly once, producing exactly one
-       CSV directory for the page (Requirement 3.9 + 8.2: one CSV per
-       page, no aggregation).
-    2. Execute exactly one ``LOAD DATA LOCAL INFILE`` statement against
-       that CSV (Requirement 8.3: one LOAD DATA per CSV).
-    3. Remove the temp directory (and therefore its CSV) after the load
+       CSV directory for the page (Requirement 3.9 + 8.2: one temp dir
+       per page, no aggregation).
+    2. Execute exactly two ``LOAD DATA LOCAL INFILE`` statements against
+       that directory — one into ``property`` and one into
+       ``property_raw`` (the raw_data split writes two CSVs per page).
+    3. Remove the temp directory (and therefore its CSVs) after the load
        returns successfully (Requirement 8.4: post-load cleanup).
 
     The :class:`BatchResult` row count is also checked to guard against
@@ -175,26 +176,35 @@ def test_bulk_load_file_lifecycle(n_rows: int) -> None:
     )
     tmpdir = Path(created_dirs[0])
 
-    # --- 2. Exactly one LOAD DATA LOCAL INFILE was executed. -----------
+    # --- 2. Exactly two LOAD DATA LOCAL INFILE statements were executed:
+    # one into `property` and one into `property_raw`, both in the same
+    # per-page transaction (the raw_data split means each page produces
+    # two CSVs under the single mkdtemp directory). ------------------
     load_statements = [
         stmt
         for stmt in executed_statements
         if "LOAD DATA LOCAL INFILE" in stmt.upper()
     ]
-    assert len(load_statements) == 1, (
-        f"Expected exactly one LOAD DATA LOCAL INFILE per page "
-        f"(Req 8.3); got {len(load_statements)}. "
-        f"All executed statements: {executed_statements}"
+    assert len(load_statements) == 2, (
+        f"Expected exactly two LOAD DATA LOCAL INFILE per page "
+        f"(one per table after the raw_data split); got "
+        f"{len(load_statements)}. All executed: {executed_statements}"
     )
-    # The LOAD DATA statement must reference the path that was just
-    # created; otherwise "one mkdtemp + one LOAD DATA" could both be true
-    # while still violating Property 20 (e.g. loading a different file).
-    assert str(tmpdir) in load_statements[0], (
-        f"LOAD DATA statement does not reference the mkdtemp() path. "
-        f"tmpdir={tmpdir}, statement={load_statements[0]!r}"
+    # Each LOAD DATA must reference the path under the mkdtemp directory.
+    for stmt in load_statements:
+        assert str(tmpdir) in stmt, (
+            f"LOAD DATA statement does not reference the mkdtemp() path. "
+            f"tmpdir={tmpdir}, statement={stmt!r}"
+        )
+    # Exactly one targets each table.
+    assert sum("INTO TABLE property " in s for s in load_statements) == 1, (
+        f"Expected one LOAD DATA into `property`; got {load_statements}"
+    )
+    assert sum("property_raw" in s for s in load_statements) == 1, (
+        f"Expected one LOAD DATA into `property_raw`; got {load_statements}"
     )
 
-    # --- 3. The temp directory (and its CSV) were removed after load. --
+    # --- 3. The temp directory (and its CSVs) were removed after load. -
     assert not tmpdir.exists(), (
         f"Temp directory {tmpdir} was not cleaned up after successful "
         f"load (Req 8.4)"

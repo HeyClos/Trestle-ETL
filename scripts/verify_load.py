@@ -29,6 +29,9 @@ def main() -> int:
             cur.execute("SELECT COUNT(*) FROM property")
             row_count = cur.fetchone()[0]
 
+            cur.execute("SELECT COUNT(*) FROM property_raw")
+            raw_row_count = cur.fetchone()[0]
+
             cur.execute(
                 "SELECT MIN(ModificationTimestamp), MAX(ModificationTimestamp) "
                 "FROM property"
@@ -40,10 +43,13 @@ def main() -> int:
             )
             distinct_status = cur.fetchone()[0]
 
+            # Every property row must have a matching raw payload row.
             cur.execute(
-                "SELECT COUNT(*) FROM property WHERE raw_data IS NULL"
+                "SELECT COUNT(*) FROM property p "
+                "LEFT JOIN property_raw r ON p.ListingKey = r.ListingKey "
+                "WHERE r.ListingKey IS NULL"
             )
-            null_raw = cur.fetchone()[0]
+            orphaned = cur.fetchone()[0]
 
             cur.execute(
                 "SELECT COUNT(*) FROM information_schema.statistics "
@@ -53,12 +59,13 @@ def main() -> int:
             secondary_indexes = cur.fetchone()[0]
 
     print(f"property row count        : {row_count:,}")
+    print(f"property_raw row count    : {raw_row_count:,}")
     print(f"earliest ModTs            : {min_ts}")
     print(f"latest ModTs              : {max_ts}")
     print(f"state.last_mod_ts         : {state['last_modification_timestamp']}")
     print(f"distinct MlsStatus        : {distinct_status}")
-    print(f"rows with null raw_data   : {null_raw}")
-    print(f"secondary indexes present : {secondary_indexes} (expect 7)")
+    print(f"property rows w/o raw row : {orphaned}")
+    print(f"secondary indexes present : {secondary_indexes} (expect 61)")
 
     return 0
 

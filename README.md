@@ -73,11 +73,18 @@ that names the missing variable, before any network or database I/O.
 ### 1. Apply the schema
 
 The schema at [`trestle_etl/sql/schema.sql`](./trestle_etl/sql/schema.sql)
-creates the `property` table (InnoDB, `utf8mb4`), every RESO Promoted_Column
-as a typed column, a `raw_data JSON NOT NULL` column for full-record
-preservation, a `loaded_at DATETIME(6) NOT NULL` column, and the seven
-secondary indexes (`ModificationTimestamp`, `MlsStatus`, `PropertyType`,
-`City`, `PostalCode`, `ListPrice`, `StateOrProvince`).
+creates two tables (InnoDB, `utf8mb4`):
+
+- `property` — every RESO Promoted_Column as a typed column plus a
+  `loaded_at DATETIME(6) NOT NULL` column, with a secondary index on every
+  non-`ListingKey` Promoted_Column. This is the table searches hit; it
+  carries no large JSON, so scans and index lookups stay fast.
+- `property_raw` — `ListingKey` (PK), `raw_data JSON NOT NULL`, and
+  `loaded_at`, holding the full unmodified RESO payload 1:1 with
+  `property`. JOIN to it only when you need the raw document.
+
+Both loaders write a row's `property` and `property_raw` halves in the same
+transaction, so the two tables never diverge for a committed batch.
 
 Apply it once against your target database:
 
